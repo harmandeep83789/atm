@@ -4,7 +4,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, List, Dict, Any
+from atm_app.exceptions import InsufficientFundsError, InvalidAmountError
 
 class TransactionType(str, Enum):
     DEPOSIT = "DEPOSIT"
@@ -44,4 +45,63 @@ class Transaction:
             balance_after=float(data["balance_after"]),
             description=data.get("description", ""),
             reference_account=data.get("reference_account"),
+        )
+
+@dataclass
+class Account:
+    account_number: str
+    holder_name: str
+    pin_hash: str
+    pin_salt: str
+    balance: float = 0.0
+    transactions: List[Transaction] = field(default_factory=list)
+
+    def deposit(self, amount: float, description: str = "Deposit") -> Transaction:
+        if amount <= 0:
+            raise InvalidAmountError("Deposit amount must be strictly positive.")
+        self.balance += amount
+        tx = Transaction(
+            amount=amount,
+            transaction_type=TransactionType.DEPOSIT,
+            balance_after=self.balance,
+            description=description,
+        )
+        self.transactions.append(tx)
+        return tx
+
+    def withdraw(self, amount: float, description: str = "Withdrawal") -> Transaction:
+        if amount <= 0:
+            raise InvalidAmountError("Withdrawal amount must be strictly positive.")
+        if amount > self.balance:
+            raise InsufficientFundsError(f"Insufficient funds. Balance: {self.balance}, Requested: {amount}")
+        self.balance -= amount
+        tx = Transaction(
+            amount=amount,
+            transaction_type=TransactionType.WITHDRAWAL,
+            balance_after=self.balance,
+            description=description,
+        )
+        self.transactions.append(tx)
+        return tx
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "account_number": self.account_number,
+            "holder_name": self.holder_name,
+            "pin_hash": self.pin_hash,
+            "pin_salt": self.pin_salt,
+            "balance": self.balance,
+            "transactions": [tx.to_dict() for tx in self.transactions],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Account:
+        txs = [Transaction.from_dict(t) for t in data.get("transactions", [])]
+        return cls(
+            account_number=data["account_number"],
+            holder_name=data["holder_name"],
+            pin_hash=data["pin_hash"],
+            pin_salt=data["pin_salt"],
+            balance=float(data["balance"]),
+            transactions=txs,
         )
