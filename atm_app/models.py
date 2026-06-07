@@ -55,6 +55,9 @@ class Account:
     pin_salt: str
     balance: float = 0.0
     transactions: List[Transaction] = field(default_factory=list)
+    failed_pin_attempts: int = 0
+    is_locked: bool = False
+    lock_reason: Optional[str] = None
 
     def deposit(self, amount: float, description: str = "Deposit") -> Transaction:
         if amount <= 0:
@@ -84,6 +87,25 @@ class Account:
         self.transactions.append(tx)
         return tx
 
+    def record_failed_pin(self, max_attempts: int = 3) -> bool:
+        """Increments failed attempt counter. Locks account if threshold reached."""
+        self.failed_pin_attempts += 1
+        if self.failed_pin_attempts >= max_attempts:
+            self.is_locked = True
+            self.lock_reason = f"Exceeded maximum failed PIN attempts ({max_attempts})"
+            return True
+        return False
+
+    def reset_failed_pin(self) -> None:
+        """Reset failed attempt counter after successful authentication."""
+        self.failed_pin_attempts = 0
+
+    def unlock(self) -> None:
+        """Administratively unlock account and reset counter."""
+        self.is_locked = False
+        self.failed_pin_attempts = 0
+        self.lock_reason = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "account_number": self.account_number,
@@ -92,6 +114,9 @@ class Account:
             "pin_salt": self.pin_salt,
             "balance": self.balance,
             "transactions": [tx.to_dict() for tx in self.transactions],
+            "failed_pin_attempts": self.failed_pin_attempts,
+            "is_locked": self.is_locked,
+            "lock_reason": self.lock_reason,
         }
 
     @classmethod
@@ -104,4 +129,7 @@ class Account:
             pin_salt=data["pin_salt"],
             balance=float(data["balance"]),
             transactions=txs,
+            failed_pin_attempts=data.get("failed_pin_attempts", 0),
+            is_locked=data.get("is_locked", False),
+            lock_reason=data.get("lock_reason"),
         )
