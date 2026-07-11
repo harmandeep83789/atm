@@ -1,8 +1,8 @@
-"""Core ATM controller coordinating operations and session lifecycle."""
+"""Core ATM controller coordinating operations, transfers, and sessions."""
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Tuple
 from atm_app.bank import Bank
-from atm_app.models import Account, Transaction
+from atm_app.models import Account, Transaction, TransactionType
 from atm_app.storage import JSONStorageManager
 from atm_app.security import verify_pin
 from atm_app.exceptions import (
@@ -10,6 +10,8 @@ from atm_app.exceptions import (
     AccountNotFoundError,
     AccountLockedError,
     ATMError,
+    InvalidAmountError,
+    InsufficientFundsError,
 )
 
 class ATMController:
@@ -19,7 +21,6 @@ class ATMController:
         self.active_account: Optional[Account] = None
 
     def login(self, account_number: str, pin: str) -> Account:
-        """Authenticate user by account number and PIN."""
         account = self.bank.get_account(account_number)
         if not account:
             raise AccountNotFoundError(f"Account '{account_number}' does not exist.")
@@ -43,7 +44,6 @@ class ATMController:
         return account
 
     def logout(self) -> None:
-        """Terminate currently active session."""
         self.active_account = None
 
     def get_balance(self) -> float:
@@ -66,3 +66,48 @@ class ATMController:
         if self.storage:
             self.storage.save(self.bank)
         return tx
+
+    def transfer_funds(self, target_account_number: str, amount: float) -> Tuple[Transaction, Transaction]:
+        """Transfer funds between authenticated account and recipient account."""
+        if not self.active_account:
+            raise ATMError("No authenticated session.")
+        if amount <= 0:
+            raise InvalidAmountError("Transfer amount must be positive.")
+        if target_account_number == self.active_account.account_number:
+            raise InvalidAmountError("Cannot transfer funds to the same account.")
+
+        target = self.bank.get_account(target_account_number)
+        if not target:
+            raise AccountNotFoundError(f"Recipient account '{target_account_number}' not found.")
+        if target.is_locked:
+            raise AccountLockedError(f"Recipient account '{target_account_number}' is frozen.")
+        if amount > self.active_account.balance:
+            raise InsufficientFundsError(
+                f"Insufficient balance ({self.active_account.balance}) to transfer {amount}."
+            )
+
+        # Debit source
+        self.active_account.balance -= amount
+        out_tx = Transaction(
+            amount=amount,
+            transaction_type=TransactionType.TRANSFER_OUT,
+            balance_after=self.active_account.balance,
+            description=f"Transfer to {target.holder_name} ({target_account_number})",
+            reference_account=target_account_number,
+        )
+        self.active_account.transactions.append(out_tx)
+
+        # Credit destination
+        target.balance += amount
+        in_tx = Transaction(
+            amount=amount,
+            transaction_type=TransactionType.TRANSFER_IN,
+            balance_after=target.balance,
+            description=f"Transfer from {self.active_account.holder_name} ({self.active_account.account_number})",
+            reference_account=self.active_account.account_number,
+        )
+        target.transactions.append(in_tx)
+
+        if self.storage:
+            self.storage.save(self.bank)
+        return out_tx, in_tx
