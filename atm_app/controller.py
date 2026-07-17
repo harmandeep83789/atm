@@ -1,10 +1,10 @@
-"""Core ATM controller coordinating operations, transfers, and sessions."""
+"""Core ATM controller coordinating operations, transfers, PIN changes, and sessions."""
 from __future__ import annotations
 from typing import Optional, Tuple
 from atm_app.bank import Bank
 from atm_app.models import Account, Transaction, TransactionType
 from atm_app.storage import JSONStorageManager
-from atm_app.security import verify_pin
+from atm_app.security import verify_pin, hash_pin, validate_pin_format
 from atm_app.exceptions import (
     AuthenticationError,
     AccountNotFoundError,
@@ -68,7 +68,6 @@ class ATMController:
         return tx
 
     def transfer_funds(self, target_account_number: str, amount: float) -> Tuple[Transaction, Transaction]:
-        """Transfer funds between authenticated account and recipient account."""
         if not self.active_account:
             raise ATMError("No authenticated session.")
         if amount <= 0:
@@ -86,7 +85,6 @@ class ATMController:
                 f"Insufficient balance ({self.active_account.balance}) to transfer {amount}."
             )
 
-        # Debit source
         self.active_account.balance -= amount
         out_tx = Transaction(
             amount=amount,
@@ -97,7 +95,6 @@ class ATMController:
         )
         self.active_account.transactions.append(out_tx)
 
-        # Credit destination
         target.balance += amount
         in_tx = Transaction(
             amount=amount,
@@ -111,3 +108,27 @@ class ATMController:
         if self.storage:
             self.storage.save(self.bank)
         return out_tx, in_tx
+
+    def change_pin(self, old_pin: str, new_pin: str) -> None:
+        """Securely changes account PIN after confirming old PIN."""
+        if not self.active_account:
+            raise ATMError("No authenticated session.")
+        if not verify_pin(old_pin, self.active_account.pin_hash, self.active_account.pin_salt):
+            raise AuthenticationError("Current PIN is incorrect.")
+        if not validate_pin_format(new_pin):
+            raise AuthenticationError("New PIN must be 4 to 6 numeric digits.")
+        if old_pin == new_pin:
+            raise AuthenticationError("New PIN cannot be identical to current PIN.")
+
+        new_hash, new_salt = hash_pin(new_pin)
+        self.active_account.pin_hash = new_hash
+        self.active_account.pin_salt = new_salt
+        tx = Transaction(
+            amount=0.0,
+            transaction_type=TransactionType.PIN_CHANGE,
+            balance_after=self.active_account.balance,
+            description="Security PIN updated successfully",
+        )
+        self.active_account.transactions.append(tx)
+        if self.storage:
+            self.storage.save(self.bank)
