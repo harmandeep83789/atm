@@ -1,5 +1,6 @@
-"""Core ATM controller coordinating operations, transfers, PIN changes, and sessions."""
+"""Core ATM controller with transaction limits and security policies."""
 from __future__ import annotations
+from datetime import datetime, date
 from typing import Optional, Tuple
 from atm_app.bank import Bank
 from atm_app.models import Account, Transaction, TransactionType
@@ -12,9 +13,14 @@ from atm_app.exceptions import (
     ATMError,
     InvalidAmountError,
     InsufficientFundsError,
+    DailyLimitExceededError,
 )
 
 class ATMController:
+    DAILY_WITHDRAWAL_LIMIT = 25000.0
+    MAX_SINGLE_WITHDRAWAL = 10000.0
+    MIN_WITHDRAWAL = 100.0
+
     def __init__(self, bank: Bank, storage: Optional[JSONStorageManager] = None):
         self.bank = bank
         self.storage = storage
@@ -51,6 +57,17 @@ class ATMController:
             raise ATMError("No authenticated session.")
         return self.active_account.balance
 
+    def get_today_withdrawn_total(self) -> float:
+        """Calculate total amount withdrawn today."""
+        if not self.active_account:
+            return 0.0
+        today_str = date.today().isoformat()
+        total = 0.0
+        for tx in self.active_account.transactions:
+            if tx.transaction_type == TransactionType.WITHDRAWAL and tx.timestamp.startswith(today_str):
+                total += tx.amount
+        return total
+
     def deposit(self, amount: float) -> Transaction:
         if not self.active_account:
             raise ATMError("No authenticated session.")
@@ -62,6 +79,19 @@ class ATMController:
     def withdraw(self, amount: float) -> Transaction:
         if not self.active_account:
             raise ATMError("No authenticated session.")
+        if amount < self.MIN_WITHDRAWAL:
+            raise InvalidAmountError(f"Minimum withdrawal amount is ₹{self.MIN_WITHDRAWAL:,.2f}.")
+        if amount > self.MAX_SINGLE_WITHDRAWAL:
+            raise InvalidAmountError(f"Maximum single withdrawal is ₹{self.MAX_SINGLE_WITHDRAWAL:,.2f}.")
+
+        withdrawn_today = self.get_today_withdrawn_total()
+        if withdrawn_today + amount > self.DAILY_WITHDRAWAL_LIMIT:
+            remaining_limit = max(0.0, self.DAILY_WITHDRAWAL_LIMIT - withdrawn_today)
+            raise DailyLimitExceededError(
+                f"Daily withdrawal limit of ₹{self.DAILY_WITHDRAWAL_LIMIT:,.2f} exceeded. "
+                f"Remaining today: ₹{remaining_limit:,.2f}"
+            )
+
         tx = self.active_account.withdraw(amount)
         if self.storage:
             self.storage.save(self.bank)
@@ -110,7 +140,6 @@ class ATMController:
         return out_tx, in_tx
 
     def change_pin(self, old_pin: str, new_pin: str) -> None:
-        """Securely changes account PIN after confirming old PIN."""
         if not self.active_account:
             raise ATMError("No authenticated session.")
         if not verify_pin(old_pin, self.active_account.pin_hash, self.active_account.pin_salt):
