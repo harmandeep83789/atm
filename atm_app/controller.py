@@ -1,7 +1,7 @@
-"""Core ATM controller with transaction limits and security policies."""
+"""Core ATM controller with transaction limits, statements, and security policies."""
 from __future__ import annotations
 from datetime import datetime, date
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from atm_app.bank import Bank
 from atm_app.models import Account, Transaction, TransactionType
 from atm_app.storage import JSONStorageManager
@@ -58,7 +58,6 @@ class ATMController:
         return self.active_account.balance
 
     def get_today_withdrawn_total(self) -> float:
-        """Calculate total amount withdrawn today."""
         if not self.active_account:
             return 0.0
         today_str = date.today().isoformat()
@@ -161,3 +160,15 @@ class ATMController:
         self.active_account.transactions.append(tx)
         if self.storage:
             self.storage.save(self.bank)
+
+    def get_mini_statement(self, limit: int = 5) -> List[Transaction]:
+        """Return the most recent transactions up to limit."""
+        if not self.active_account:
+            raise ATMError("No authenticated session.")
+        return list(reversed(self.active_account.transactions[-limit:]))
+
+    def get_full_statement(self) -> List[Transaction]:
+        """Return full transaction history."""
+        if not self.active_account:
+            raise ATMError("No authenticated session.")
+        return list(self.active_account.transactions)
