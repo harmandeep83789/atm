@@ -1,4 +1,4 @@
-"""Core ATM controller with transaction limits, statements, and security policies."""
+"""Core ATM controller with statements, filtering, and transaction policies."""
 from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional, Tuple, List
@@ -162,13 +162,31 @@ class ATMController:
             self.storage.save(self.bank)
 
     def get_mini_statement(self, limit: int = 5) -> List[Transaction]:
-        """Return the most recent transactions up to limit."""
         if not self.active_account:
             raise ATMError("No authenticated session.")
         return list(reversed(self.active_account.transactions[-limit:]))
 
     def get_full_statement(self) -> List[Transaction]:
-        """Return full transaction history."""
         if not self.active_account:
             raise ATMError("No authenticated session.")
         return list(self.active_account.transactions)
+
+    def filter_transactions(
+        self,
+        tx_type: Optional[TransactionType] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+    ) -> List[Transaction]:
+        """Filter account transactions by type or amount criteria."""
+        if not self.active_account:
+            raise ATMError("No authenticated session.")
+        results = []
+        for tx in self.active_account.transactions:
+            if tx_type and tx.transaction_type != tx_type:
+                continue
+            if min_amount is not None and tx.amount < min_amount:
+                continue
+            if max_amount is not None and tx.amount > max_amount:
+                continue
+            results.append(tx)
+        return results
