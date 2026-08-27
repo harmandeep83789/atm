@@ -1,10 +1,12 @@
-"""Core ATM controller with statements, filtering, and transaction policies."""
+"""Core ATM controller with account registration and banking workflows."""
 from __future__ import annotations
+import random
 from datetime import datetime, date
 from typing import Optional, Tuple, List
 from atm_app.bank import Bank
 from atm_app.models import Account, Transaction, TransactionType
 from atm_app.storage import JSONStorageManager
+from atm_app.dispenser import CashDispenser
 from atm_app.security import verify_pin, hash_pin, validate_pin_format
 from atm_app.exceptions import (
     AuthenticationError,
@@ -21,10 +23,44 @@ class ATMController:
     MAX_SINGLE_WITHDRAWAL = 10000.0
     MIN_WITHDRAWAL = 100.0
 
-    def __init__(self, bank: Bank, storage: Optional[JSONStorageManager] = None):
+    def __init__(
+        self,
+        bank: Bank,
+        storage: Optional[JSONStorageManager] = None,
+        dispenser: Optional[CashDispenser] = None
+    ):
         self.bank = bank
         self.storage = storage
+        self.dispenser = dispenser or CashDispenser()
         self.active_account: Optional[Account] = None
+
+    def register_account(self, holder_name: str, pin: str, initial_deposit: float = 1000.0) -> Account:
+        """Creates a brand new customer account."""
+        if not holder_name.strip():
+            raise ATMError("Account holder name cannot be empty.")
+        if not validate_pin_format(pin):
+            raise ATMError("PIN must be 4 to 6 numeric digits.")
+        if initial_deposit < 500.0:
+            raise InvalidAmountError("Initial deposit must be at least ₹500.00.")
+
+        # Generate unique 4 to 6 digit account number
+        while True:
+            acc_num = str(random.randint(2000, 9999))
+            if not self.bank.account_exists(acc_num):
+                break
+
+        p_hash, p_salt = hash_pin(pin)
+        acc = Account(
+            account_number=acc_num,
+            holder_name=holder_name.strip(),
+            pin_hash=p_hash,
+            pin_salt=p_salt,
+        )
+        acc.deposit(initial_deposit, description="Initial Deposit on Registration")
+        self.bank.add_account(acc)
+        if self.storage:
+            self.storage.save(self.bank)
+        return acc
 
     def login(self, account_number: str, pin: str) -> Account:
         account = self.bank.get_account(account_number)
@@ -90,6 +126,9 @@ class ATMController:
                 f"Daily withdrawal limit of ₹{self.DAILY_WITHDRAWAL_LIMIT:,.2f} exceeded. "
                 f"Remaining today: ₹{remaining_limit:,.2f}"
             )
+
+        # Dispense physical cash notes
+        self.dispenser.dispense(int(amount))
 
         tx = self.active_account.withdraw(amount)
         if self.storage:
@@ -177,7 +216,6 @@ class ATMController:
         min_amount: Optional[float] = None,
         max_amount: Optional[float] = None,
     ) -> List[Transaction]:
-        """Filter account transactions by type or amount criteria."""
         if not self.active_account:
             raise ATMError("No authenticated session.")
         results = []
