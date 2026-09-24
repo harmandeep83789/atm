@@ -1,5 +1,7 @@
-"""Main executable CLI driver for the ATM Banking Simulator."""
+"""Main executable CLI driver for the ATM Banking Simulator with CLI arguments."""
+import argparse
 import sys
+from atm_app import __version__
 from atm_app.bank import Bank
 from atm_app.config import Config
 from atm_app.storage import JSONStorageManager
@@ -101,9 +103,15 @@ def customer_session(controller: ATMController, config: Config, logger):
             print_error("Invalid selection. Try again.")
 
 def main():
-    config = Config()
+    parser = argparse.ArgumentParser(description="ATM Banking Simulation System")
+    parser.add_argument("--version", action="version", version=f"ATM Simulator v{__version__}")
+    parser.add_argument("--data-dir", default="data", help="Directory path to store database files")
+    parser.add_argument("--config", default="config.json", help="Path to JSON configuration file")
+    args = parser.parse_args()
+
+    config = Config.load(args.config)
     logger = setup_logger()
-    storage = JSONStorageManager()
+    storage = JSONStorageManager(data_dir=args.data_dir)
     bank = storage.load(config.bank_name)
     dispenser = CashDispenser()
     controller = ATMController(bank, storage, dispenser)
