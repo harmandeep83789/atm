@@ -1,0 +1,5 @@
+# Core application relies solely on Python standard library.
+# Development and testing tools:
+pytest>=7.0.0
+flake8>=6.0.0
+black>=23.0.0
